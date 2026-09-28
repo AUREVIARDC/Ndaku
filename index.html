@@ -1865,14 +1865,25 @@ function getReferralFromUrl(){
 }
 
 async function findReferrer(refValue){
-    const value = String(refValue || '').trim();
+    // Le code de parrainage est toujours comparé en majuscules afin qu'un
+    // utilisateur puisse saisir RDC-xxxx, rdc-xxxx ou RDC-XXXX indifféremment.
+    const rawValue = String(refValue || '').trim();
+    const value = rawValue.toUpperCase();
     if(!value) return null;
     try{
         const byCode = await getDocs(query(collection(db,'users'), where('referralCode','==',value), limit(1)));
         if(!byCode.empty) return {uid:byCode.docs[0].id, ...byCode.docs[0].data()};
-        const byPhone = await getDocs(query(collection(db,'users'), where('phone','==',normalizePhone(value)), limit(1)));
+
+        // Compatibilité avec les anciens comptes dont le code pourrait avoir
+        // été enregistré avec une casse différente.
+        const byCodeRaw = rawValue !== value
+            ? await getDocs(query(collection(db,'users'), where('referralCode','==',rawValue), limit(1)))
+            : {empty:true};
+        if(!byCodeRaw.empty) return {uid:byCodeRaw.docs[0].id, ...byCodeRaw.docs[0].data()};
+
+        const byPhone = await getDocs(query(collection(db,'users'), where('phone','==',normalizePhone(rawValue)), limit(1)));
         if(!byPhone.empty) return {uid:byPhone.docs[0].id, ...byPhone.docs[0].data()};
-        const byUid = await getDoc(doc(db,'users',value));
+        const byUid = await getDoc(doc(db,'users',rawValue));
         if(byUid.exists()) return {uid:byUid.id, ...byUid.data()};
     }catch(error){
         console.warn('Recherche du parrain impossible:', error);
@@ -2186,7 +2197,7 @@ window.firebaseRegister = async function(event){
             return;
         }
 
-        const refValue = referralInput || getReferralFromUrl();
+        const refValue = (referralInput || getReferralFromUrl()).trim();
         const referrer = await findReferrer(refValue);
         const result = await createUserWithEmailAndPassword(auth, technicalEmail, password);
         await updateProfile(result.user, {displayName:name});
@@ -2199,10 +2210,11 @@ window.firebaseRegister = async function(event){
             displayName: name,
             phone: phone,
             referralCode: ownReferralCode,
-            referredByCode: refValue || '',
+            referredByCode: referrer ? String(referrer.referralCode || refValue).trim().toUpperCase() : '',
             referredByUid: referrer?.uid || '',
             referredByPhone: referrer?.phone || '',
-            referralStatus: referrer ? 'pending' : 'none',
+            referredByName: referrer?.displayName || referrer?.name || '',
+            referralStatus: referrer ? 'active' : 'none',
             referralLevel: referrer ? 1 : 0,
             commissionBalance: 0,
             role: 'user',
